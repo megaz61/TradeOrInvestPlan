@@ -306,13 +306,19 @@ export async function PATCH(req: Request) {
         },
       })
 
-      // ── Auto-close Trade terkait di Journal
-      const openTrade = oldAsset.trades[0]
+      // ── Auto-close Trade terkait di Journal (tutup semua trade open)
+      const openTrades = await prisma.trade.findMany({
+        where: { assetId: parseInt(id), status: 'open' },
+        orderBy: { createdAt: 'asc' }
+      })
+
       const totalOldCapital = oldAsset.capitalUsed + (oldAsset.fee || 0)
       const pnlPercent = totalOldCapital > 0 ? (parsedPnl / totalOldCapital) * 100 : 0
-      if (openTrade) {
+
+      if (openTrades.length > 0) {
+        // Update first trade with PnL
         await prisma.trade.update({
-          where: { id: openTrade.id },
+          where: { id: openTrades[0].id },
           data: {
             exitPrice: closePrice,
             exitDate: new Date(),
@@ -322,6 +328,21 @@ export async function PATCH(req: Request) {
             notes: `[Auto] ${fields.notes ?? `Asset: ${newStatus}`}`,
           },
         })
+
+        // Update other trades to closed with pnl = 0 to avoid double-counting
+        if (openTrades.length > 1) {
+          const otherTradeIds = openTrades.slice(1).map(t => t.id)
+          await prisma.trade.updateMany({
+            where: { id: { in: otherTradeIds } },
+            data: {
+              exitPrice: closePrice,
+              exitDate: new Date(),
+              pnl: 0,
+              pnlPercent: 0,
+              status: 'closed',
+            }
+          })
+        }
       } else {
         const displayName = oldAsset.assetType === 'Reksadana'
           ? (oldAsset.productName || oldAsset.name)
@@ -347,6 +368,59 @@ export async function PATCH(req: Request) {
           }
         })
       }
+    }
+
+    // ── Jika aset sudah closed dan diedit parameter exitPrice atau realizedPnl-nya
+    const isAlreadyClosed = CLOSED_STATUSES.includes(oldAsset.status)
+    if (isNowClosed && isAlreadyClosed) {
+      const closedTrades = await prisma.trade.findMany({
+        where: { assetId: parseInt(id), status: 'closed' },
+        orderBy: { createdAt: 'asc' }
+      })
+      if (closedTrades.length > 0) {
+        const totalOldCapital = oldAsset.capitalUsed + (oldAsset.fee || 0)
+        const pnlPercent = totalOldCapital > 0 ? (parsedPnl / totalOldCapital) * 100 : 0
+
+        // Update primary closed trade
+        await prisma.trade.update({
+          where: { id: closedTrades[0].id },
+          data: {
+            exitPrice: closePrice,
+            pnl: parsedPnl,
+            pnlPercent,
+            symbol: fields.symbol !== undefined ? fields.symbol.toUpperCase() : undefined,
+            entryPrice: fields.entryPrice !== undefined ? parseFloat(fields.entryPrice) : undefined,
+            entryAmount: newTotalCapital,
+            leverage: fields.leverage !== undefined ? parseFloat(fields.leverage) : undefined,
+            positionSize: newTotalCapital * (fields.leverage !== undefined ? parseFloat(fields.leverage) : oldAsset.leverage),
+          }
+        })
+
+        // Sync exitPrice for other trades
+        if (closedTrades.length > 1) {
+          const otherTradeIds = closedTrades.slice(1).map(t => t.id)
+          await prisma.trade.updateMany({
+            where: { id: { in: otherTradeIds } },
+            data: {
+              exitPrice: closePrice,
+            }
+          })
+        }
+      }
+    }
+
+    // ── Jika status berubah dari closed ke active/partial_take_profit: reopen seluruh trade
+    if (isAlreadyClosed && !isNowClosed) {
+      await prisma.trade.updateMany({
+        where: { assetId: parseInt(id), actionType: { in: ['entry', 'add'] } },
+        data: {
+          status: 'open',
+          exitPrice: null,
+          exitDate: null,
+          pnl: null,
+          pnlPercent: null,
+        }
+      })
     }
 
     // ── Update wallet totalBalance & tradingBalance dengan netWalletChange

@@ -14,7 +14,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/leverage': 'Leverage Simulator',
   '/calculator': 'Calculator',
   '/compound': 'Compound Simulator',
-  '/journal': 'Trade Journal',
+  '/journal': 'Trade or Invest Journal',
   '/watchlist': 'Watchlist',
   '/settings': 'Settings',
 }

@@ -174,10 +174,26 @@ export default function SimulatorPage() {
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-xs">Pilih Asset Aktif</CardTitle>
-                  <Button size="sm" variant="outline" className="h-6 text-xs px-2" onClick={importAll}>
-                    <Download className="h-3 w-3 mr-1" />Semua Aktif
-                  </Button>
+                  <CardTitle className="text-xs flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="select-all-assets"
+                      className="h-3.5 w-3.5 rounded border-gray-600 bg-[#111827] text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      checked={
+                        assets.length > 0 &&
+                        selectedAssets.size === assets.filter(a => ['active', 'partial_take_profit'].includes(a.status)).length
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          importAll()
+                        } else {
+                          setRows([])
+                          setSelectedAssets(new Set())
+                        }
+                      }}
+                    />
+                    <Label htmlFor="select-all-assets" className="text-xs cursor-pointer text-gray-200">Pilih Semua Asset</Label>
+                  </CardTitle>
                 </div>
               </CardHeader>
               <CardContent className="p-0 max-h-64 overflow-y-auto">
@@ -218,11 +234,37 @@ export default function SimulatorPage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-xs">Input PnL per Aset</CardTitle>
-                {mode === 'manual' && (
-                  <Button size="sm" variant="outline" className="h-6 text-xs px-2" onClick={addRow}>
-                    <Plus className="h-3 w-3 mr-1" />Tambah
-                  </Button>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {rows.length > 0 && (
+                    <div className="flex rounded overflow-hidden border border-[#374151] h-6 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRows(prev => prev.map(r => ({ ...r, pnlPercent: Math.abs(r.pnlPercent) })))
+                        }}
+                        className="px-2 text-[10px] bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors cursor-pointer"
+                        title="Ubah semua PnL menjadi Untung (+)"
+                      >
+                        Semua Untung
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRows(prev => prev.map(r => ({ ...r, pnlPercent: -Math.abs(r.pnlPercent) })))
+                        }}
+                        className="px-2 text-[10px] bg-red-600/20 text-red-400 border-l border-[#374151] hover:bg-red-600/30 transition-colors cursor-pointer"
+                        title="Ubah semua PnL menjadi Rugi (-)"
+                      >
+                        Semua Rugi
+                      </button>
+                    </div>
+                  )}
+                  {mode === 'manual' && (
+                    <Button size="sm" variant="outline" className="h-6 text-xs px-2" onClick={addRow}>
+                      <Plus className="h-3 w-3 mr-1" />Tambah
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -264,12 +306,33 @@ export default function SimulatorPage() {
                         </div>
                         <div>
                           <p className="text-[10px] text-gray-500 mb-0.5">PnL %</p>
-                          <Input
-                            type="number" step="0.1" className="h-7 text-xs"
-                            value={row.pnlPercent || ''}
-                            onChange={e => updateRow(row.id, 'pnlPercent', parseFloat(e.target.value) || 0)}
-                            placeholder="0"
-                          />
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const currentVal = row.pnlPercent || 0
+                                updateRow(row.id, 'pnlPercent', currentVal === 0 ? 5 * -1 : currentVal * -1)
+                              }}
+                              className={`h-7 px-1.5 text-xs font-bold rounded border select-none transition-colors w-7 shrink-0 cursor-pointer ${
+                                row.pnlPercent >= 0
+                                  ? 'bg-emerald-600/20 border-emerald-500 text-emerald-400 hover:bg-emerald-600/30'
+                                  : 'bg-red-600/20 border-red-500 text-red-400 hover:bg-red-600/30'
+                              }`}
+                              title="Klik untuk mengubah Untung (+) / Rugi (-)"
+                            >
+                              {row.pnlPercent >= 0 ? '+' : '-'}
+                            </button>
+                            <Input
+                              type="number" step="0.1" className="h-7 text-xs flex-1"
+                              value={Math.abs(row.pnlPercent) || ''}
+                              onChange={e => {
+                                const val = parseFloat(e.target.value) || 0
+                                const isNegative = row.pnlPercent < 0
+                                updateRow(row.id, 'pnlPercent', isNegative ? -Math.abs(val) : Math.abs(val))
+                              }}
+                              placeholder="0"
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>

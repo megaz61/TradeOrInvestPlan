@@ -110,6 +110,7 @@ model Trade {
   notes        String    @default("")
   strategy     String    @default("")
   status       String    @default("open")
+  actionType   String    @default("entry")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

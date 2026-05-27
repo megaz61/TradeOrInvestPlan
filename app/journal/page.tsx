@@ -25,23 +25,24 @@ import type { Trade, Emotion, Currency, Asset } from '@/types'
 const EMOTIONS: Emotion[] = ['Fear', 'Greed', 'FOMO', 'Neutral', 'Confident']
 
 const tradeSchema = z.object({
-  symbol: z.string().min(1),
-  assetId: z.string().optional(),
+  symbol: z.string().min(1, "Symbol wajib diisi"),
+  assetId: z.string().min(1, "Aset wajib dipilih"),
   assetType: z.enum(['Crypto', 'Forex', 'Stock', 'Commodity', 'Reksadana']).optional(),
   platform: z.string().optional(),
-  entryPrice: z.coerce.number().positive(),
-  exitPrice: z.coerce.number().optional(),
-  entryAmount: z.coerce.number().positive(),
+  entryPrice: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().min(0).default(0)),
+  exitPrice: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
+  entryAmount: z.coerce.number().positive("Modal harus > 0"),
   leverage: z.coerce.number().min(1).default(1),
   positionSize: z.coerce.number().optional(),
-  pnl: z.coerce.number().optional(),
-  pnlPercent: z.coerce.number().optional(),
+  pnl: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
+  pnlPercent: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
   emotion: z.enum(['Fear', 'Greed', 'FOMO', 'Neutral', 'Confident']).default('Neutral'),
   notes: z.string().default(''),
   strategy: z.string().default(''),
   status: z.enum(['open', 'closed']).default('open'),
+  actionType: z.enum(['entry', 'add', 'reduce', 'close', 'cut_loss', 'liquidation', 'realize_pnl']).default('entry'),
   entryDate: z.string(),
-  exitDate: z.string().optional(),
+  exitDate: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.string().optional()),
 })
 
 type TradeForm = z.infer<typeof tradeSchema>
@@ -61,6 +62,12 @@ export default function JournalPage() {
   const [walletUpdated, setWalletUpdated] = useState<number | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
 
+  const [pnlType, setPnlType] = useState<'profit' | 'loss'>('profit')
+  const [pnlAmountInput, setPnlAmountInput] = useState<string>('')
+  const [pnlPercentInput, setPnlPercentInput] = useState<string>('')
+  const [addCapitalInput, setAddCapitalInput] = useState<string>('')
+  const [reduceCapitalInput, setReduceCapitalInput] = useState<string>('')
+
   const form = useForm<TradeForm>({
     resolver: zodResolver(tradeSchema),
     defaultValues: {
@@ -75,6 +82,7 @@ export default function JournalPage() {
       notes: '',
       strategy: '',
       status: 'open',
+      actionType: 'entry',
       entryDate: new Date().toISOString().split('T')[0],
     },
   })
@@ -93,6 +101,74 @@ export default function JournalPage() {
       }
     }
   }, [watchedAssetId, assets, form])
+
+  const watchedEntryAmount = form.watch('entryAmount') || 0
+  const watchedLeverage = form.watch('leverage') || 1
+
+  const currentAction = form.watch('actionType')
+  const relevantAmount = useMemo(() => {
+    if (currentAction === 'add') {
+      return parseFloat(addCapitalInput) || 0
+    }
+    if (currentAction === 'reduce') {
+      return parseFloat(reduceCapitalInput) || 0
+    }
+    return watchedEntryAmount
+  }, [currentAction, addCapitalInput, reduceCapitalInput, watchedEntryAmount])
+
+  const watchedPositionSize = relevantAmount * watchedLeverage
+
+  const handlePnlAmountChange = (val: string) => {
+    setPnlAmountInput(val)
+    if (watchedPositionSize > 0 && val !== '') {
+      const num = parseFloat(val)
+      if (!isNaN(num)) {
+        const pct = (num / watchedPositionSize) * 100
+        setPnlPercentInput(pct.toFixed(2))
+      }
+    } else {
+      setPnlPercentInput('')
+    }
+  }
+
+  const handlePnlPercentChange = (val: string) => {
+    setPnlPercentInput(val)
+    if (watchedPositionSize > 0 && val !== '') {
+      const num = parseFloat(val)
+      if (!isNaN(num)) {
+        const amt = watchedPositionSize * (num / 100)
+        setPnlAmountInput(amt.toFixed(2))
+      }
+    } else {
+      setPnlAmountInput('')
+    }
+  }
+
+  const watchedActionType = form.watch('actionType')
+  useEffect(() => {
+    if (['close', 'cut_loss', 'liquidation', 'realize_pnl'].includes(watchedActionType)) {
+      form.setValue('status', 'closed')
+    } else {
+      form.setValue('status', 'open')
+    }
+  }, [watchedActionType, form])
+
+  useEffect(() => {
+    if (!open) {
+      setPnlAmountInput('')
+      setPnlPercentInput('')
+      setPnlType('profit')
+      setAddCapitalInput('')
+      setReduceCapitalInput('')
+    }
+  }, [open])
+
+  useEffect(() => {
+    setPnlAmountInput('')
+    setPnlPercentInput('')
+    setAddCapitalInput('')
+    setReduceCapitalInput('')
+  }, [watchedAssetId])
 
   const fetchTrades = useCallback(async () => {
     setLoading(true)
@@ -115,6 +191,10 @@ export default function JournalPage() {
     // Fetch assets for linking
     fetch('/api/assets').then(r => r.json()).then(d => setAssets(d.data ?? []))
   }, [])
+
+  const activeAssets = useMemo(() => {
+    return assets.filter(a => ['active', 'partial_take_profit'].includes(a.status))
+  }, [assets])
 
   const filteredTrades = useMemo(() => {
     return trades.filter(trade => {
@@ -175,14 +255,20 @@ export default function JournalPage() {
   async function onSubmit(values: TradeForm) {
     setSaving(true)
     try {
-      // Auto-calculate PnL if both entry and exit are present
-      let pnl = values.pnl
-      let pnlPercent = values.pnlPercent
-      if (values.exitPrice && values.status === 'closed') {
-        const diff = values.exitPrice - values.entryPrice
-        const posSize = values.entryAmount * values.leverage
-        pnl = posSize * (diff / values.entryPrice)
-        pnlPercent = (diff / values.entryPrice) * 100 * values.leverage
+      let pnl = null
+      let pnlPercent = null
+      let finalEntryAmount = values.entryAmount
+
+      if (values.actionType === 'add') {
+        finalEntryAmount = parseFloat(addCapitalInput) || 0
+      } else if (values.actionType === 'reduce') {
+        finalEntryAmount = parseFloat(reduceCapitalInput) || 0
+      } else if (['close', 'cut_loss', 'liquidation', 'realize_pnl'].includes(values.actionType)) {
+        const amt = parseFloat(pnlAmountInput) || 0
+        const pct = parseFloat(pnlPercentInput) || 0
+        const multiplier = pnlType === 'loss' ? -1 : 1
+        pnl = amt * multiplier
+        pnlPercent = pct * multiplier
       }
 
       const res = await fetch('/api/trades', {
@@ -190,13 +276,13 @@ export default function JournalPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...values,
+          entryAmount: finalEntryAmount,
           pnl,
           pnlPercent,
-          positionSize: values.entryAmount * values.leverage,
+          positionSize: finalEntryAmount * values.leverage,
         }),
       })
       if (res.ok) {
-        const responseData = await res.json()
         setOpen(false)
         form.reset()
         fetchTrades()
@@ -299,90 +385,81 @@ export default function JournalPage() {
         <div className="ml-auto">
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button size="sm"><Plus className="h-3.5 w-3.5 mr-1.5" />Log Trade</Button>
+              <Button size="sm"><Plus className="h-3.5 w-3.5 mr-1.5" />Log Trade or Invest</Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
-              <DialogHeader><DialogTitle>Log Trade Baru</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>Log Trade or Invest Baru</DialogTitle></DialogHeader>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
                 {/* Hubungkan ke Aset */}
                 <div className="space-y-1.5">
-                  <Label>Hubungkan ke Aset</Label>
-                  <Select
-                    value={form.watch('assetId') || ''}
-                    onValueChange={v => form.setValue('assetId', v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="-- Buat Aset Baru --" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="">-- Buat Aset Baru --</SelectItem>
-                      {assets
-                        .filter(a => ['planned', 'active', 'partial_take_profit'].includes(a.status))
-                        .map(a => (
+                  <Label>Hubungkan ke Aset *</Label>
+                  {activeAssets.length === 0 ? (
+                    <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded text-xs text-yellow-400">
+                      ⚠️ Tidak ada aset berjalan yang aktif. Harap tambahkan atau aktifkan aset terlebih dahulu di halaman Asset.
+                    </div>
+                  ) : (
+                    <Select
+                      value={form.watch('assetId') || ''}
+                      onValueChange={v => form.setValue('assetId', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih Aset Aktif..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeAssets.map(a => (
                           <SelectItem key={a.id} value={String(a.id)}>
-                            {a.symbol || a.productName} ({a.status}) — Entry: {a.entryPrice}
+                            {a.symbol || a.productName} ({a.status === 'partial_take_profit' ? 'Partial TP' : 'Active'}) — Entry: {a.entryPrice}
                           </SelectItem>
                         ))}
-                    </SelectContent>
-                  </Select>
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {form.formState.errors.assetId && (
+                    <p className="text-[10px] text-red-500 mt-1">{form.formState.errors.assetId.message}</p>
+                  )}
                 </div>
-
-                {/* Tipe & Platform jika aset baru */}
-                {!form.watch('assetId') && (
-                  <div className="grid grid-cols-2 gap-3 p-2 rounded-md border border-gray-700 bg-gray-800/40">
-                    <div className="space-y-1.5">
-                      <Label>Tipe Aset Baru</Label>
-                      <Select
-                        value={form.watch('assetType') || 'Crypto'}
-                        onValueChange={v => form.setValue('assetType', v as any)}
-                      >
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Crypto">Crypto</SelectItem>
-                          <SelectItem value="Forex">Forex</SelectItem>
-                          <SelectItem value="Stock">Stock</SelectItem>
-                          <SelectItem value="Commodity">Commodity</SelectItem>
-                          <SelectItem value="Reksadana">Reksadana</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Platform Aset Baru</Label>
-                      <Input {...form.register('platform')} placeholder="mis: Binance, Tokocrypto" />
-                    </div>
-                  </div>
-                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Symbol *</Label>
-                    <Input {...form.register('symbol')} placeholder="BTC/USDT" />
+                    <Input {...form.register('symbol')} placeholder="BTC/USDT" readOnly className="bg-gray-800/50" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Status</Label>
-                    <Select value={form.watch('status')} onValueChange={v => form.setValue('status', v as 'open' | 'closed')}>
+                    <Label>Aksi Trade</Label>
+                    <Select value={form.watch('actionType')} onValueChange={v => form.setValue('actionType', v as any)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="open">Open</SelectItem>
-                        <SelectItem value="closed">Closed</SelectItem>
+                        <SelectItem value="entry">Entry (Buka Posisi)</SelectItem>
+                        <SelectItem value="add">Tambah Modal (Scale In)</SelectItem>
+                        <SelectItem value="reduce">Kurangi Modal (Scale Out)</SelectItem>
+                        <SelectItem value="realize_pnl">Realisasi Profit/Loss (Aset Tetap Aktif)</SelectItem>
+                        <SelectItem value="close">Tutup Posisi (Stop Aset)</SelectItem>
+                        <SelectItem value="cut_loss">Cut Loss</SelectItem>
+                        <SelectItem value="liquidation">Margin Call (Rugi Total / Habis)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-1.5">
                     <Label>Harga Entry *</Label>
-                    <Input type="number" step="any" {...form.register('entryPrice')} />
+                    <Input type="number" step="any" {...form.register('entryPrice')} readOnly className="bg-gray-800/50 font-mono" />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Harga Exit</Label>
-                    <Input type="number" step="any" {...form.register('exitPrice')} placeholder="Opsional" />
+                    <Input type="number" step="any" {...form.register('exitPrice')} placeholder="Opsional" className="font-mono" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Jumlah Modal *</Label>
-                    <Input type="number" step="any" {...form.register('entryAmount')} />
+                    <Label>Jumlah Modal Aktif</Label>
+                    <Input
+                      type="number"
+                      step="any"
+                      {...form.register('entryAmount')}
+                      readOnly
+                      className="bg-gray-800/50 font-mono"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Leverage</Label>
-                    <Input type="number" min="1" {...form.register('leverage')} />
+                    <Input type="number" min="1" {...form.register('leverage')} readOnly className="bg-gray-800/50 font-mono" />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Tanggal Entry</Label>
@@ -392,7 +469,118 @@ export default function JournalPage() {
                     <Label>Tanggal Exit</Label>
                     <Input type="date" {...form.register('exitDate')} />
                   </div>
+
+                  {/* Input penambahan modal */}
+                  {form.watch('actionType') === 'add' && (
+                    <div className="space-y-1.5 col-span-2 p-2 bg-blue-500/5 border border-blue-500/20 rounded-md">
+                      <Label className="text-blue-400">Modal yang Ditambahkan *</Label>
+                      <Input
+                        type="number"
+                        step="any"
+                        value={addCapitalInput}
+                        onChange={e => setAddCapitalInput(e.target.value)}
+                        placeholder="Input nominal penambahan modal..."
+                        className="font-mono"
+                      />
+                    </div>
+                  )}
+
+                  {/* Input pengurangan modal */}
+                  {form.watch('actionType') === 'reduce' && (
+                    <div className="space-y-1.5 col-span-2 p-2 bg-yellow-500/5 border border-yellow-500/20 rounded-md">
+                      <Label className="text-yellow-400">Modal yang Dikurangkan *</Label>
+                      <Input
+                        type="number"
+                        step="any"
+                        value={reduceCapitalInput}
+                        onChange={e => setReduceCapitalInput(e.target.value)}
+                        placeholder="Input nominal pengurangan modal..."
+                        className="font-mono"
+                      />
+                    </div>
+                  )}
                 </div>
+
+                {/* PnL Section (hanya untuk realize_pnl, close, cut_loss) */}
+                {['realize_pnl', 'close', 'cut_loss'].includes(form.watch('actionType')) && (
+                  <div className="p-3 rounded-md border border-gray-700 bg-gray-800/40 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold text-gray-300">Hasil Keuntungan / Kerugian</Label>
+                      <div className="flex bg-gray-900 rounded p-0.5 border border-gray-700">
+                        <button
+                          type="button"
+                          onClick={() => setPnlType('profit')}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                            pnlType === 'profit'
+                              ? 'bg-emerald-600 text-white'
+                              : 'text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          Untung (Profit)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPnlType('loss')}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                            pnlType === 'loss'
+                              ? 'bg-red-600 text-white'
+                              : 'text-gray-400 hover:text-gray-200'
+                          }`}
+                        >
+                          Rugi (Loss)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-[11px]">Nominal (Uang)</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          value={pnlAmountInput}
+                          onChange={e => handlePnlAmountChange(e.target.value)}
+                          placeholder="0"
+                          className="h-8 text-xs font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px]">Persentase (%)</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          value={pnlPercentInput}
+                          onChange={e => handlePnlPercentChange(e.target.value)}
+                          placeholder="0"
+                          className="h-8 text-xs font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Margin Call / Liquidation Preview */}
+                {form.watch('actionType') === 'liquidation' && (
+                  <div className="p-3 rounded-md border border-red-500/30 bg-red-500/5 space-y-2">
+                    <div className="flex items-center justify-between text-xs text-red-400 font-semibold">
+                      <span>⚠️ Estimasi Hasil Margin Call</span>
+                      <Badge variant="loss" className="bg-red-600 text-white border-none text-[10px] px-1.5 py-0.5">Rugi 100%</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <span className="text-gray-400">Kerugian Nominal:</span>
+                        <p className="font-mono text-red-400 font-semibold mt-0.5">
+                          -{watchedEntryAmount.toLocaleString()} {currency}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Persentase Kerugian:</span>
+                        <p className="font-mono text-red-400 font-semibold mt-0.5">-100%</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
                   <Label>Emotion</Label>
                   <Select value={form.watch('emotion')} onValueChange={v => form.setValue('emotion', v as Emotion)}>
@@ -412,7 +600,7 @@ export default function JournalPage() {
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Batal</Button>
-                  <Button type="submit" size="sm" disabled={saving}>{saving ? 'Menyimpan...' : 'Simpan'}</Button>
+                  <Button type="submit" size="sm" disabled={saving || activeAssets.length === 0}>{saving ? 'Menyimpan...' : 'Simpan'}</Button>
                 </div>
               </form>
             </DialogContent>
@@ -426,7 +614,7 @@ export default function JournalPage() {
           {loading ? (
             <div className="p-4 space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
           ) : filteredTrades.length === 0 ? (
-            <EmptyState icon={BookOpen} title="Belum ada trade" description="Log trade pertama kamu." action={<Button size="sm" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Log Trade</Button>} />
+            <EmptyState icon={BookOpen} title="Belum ada trade" description="Log trade or invest pertama kamu." action={<Button size="sm" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Log Trade or Invest</Button>} />
           ) : (
             <div className="overflow-auto sticky-header">
               <Table>

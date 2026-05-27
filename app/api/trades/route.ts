@@ -37,22 +37,153 @@ export async function POST(req: Request) {
       symbol, assetId, entryPrice, exitPrice,
       entryDate, exitDate, entryAmount, leverage,
       positionSize, pnl, pnlPercent,
-      emotion, notes, strategy, status
+      emotion, notes, strategy, status,
+      actionType
     } = body
 
-    const parsedPnl = pnl !== undefined && pnl !== null ? parseFloat(pnl) : null
+    const parsedActionType = actionType ?? 'entry'
+    const parsedEntry = parseFloat(entryPrice) || 0
+    const parsedAmount = parseFloat(entryAmount) || 0
+    const parsedLeverage = parseFloat(leverage) || 1
+    const parsedPositionSize = parseFloat(positionSize) || (parsedAmount * parsedLeverage)
+
+    let parsedExit = (exitPrice !== undefined && exitPrice !== null && exitPrice !== '') ? parseFloat(exitPrice) : null
+    let parsedPnl = (pnl !== undefined && pnl !== null && pnl !== '') ? parseFloat(pnl) : null
+    let parsedPnlPercent = (pnlPercent !== undefined && pnlPercent !== null && pnlPercent !== '') ? parseFloat(pnlPercent) : null
+
+    if (parsedActionType === 'liquidation') {
+      parsedPnl = -parsedAmount
+      parsedPnlPercent = -100
+      parsedExit = parsedLeverage > 1 ? parsedEntry * (1 - 1 / parsedLeverage) : 0
+    }
+
     let finalAssetId = assetId ? parseInt(assetId) : null
 
-    // ── Auto-create Asset if not linked
-    if (!finalAssetId) {
-      const newAssetStatus = status === 'open' 
-        ? 'active' 
-        : (parsedPnl !== null && parsedPnl >= 0 ? 'closed_profit' : 'closed_loss')
+    // ── Handle updates to the selected existing asset based on actionType
+    if (finalAssetId) {
+      const asset = await prisma.asset.findUnique({ where: { id: finalAssetId } })
+      if (asset) {
+        if (parsedActionType === 'add') {
+          // Tambah Modal (Scale In)
+          const newCapitalUsed = asset.capitalUsed + parsedAmount
+          await prisma.asset.update({
+            where: { id: finalAssetId },
+            data: {
+              capitalUsed: newCapitalUsed,
+              currentCapital: asset.currentCapital + parsedAmount,
+              status: 'active',
+            }
+          })
+          // Log event
+          await prisma.assetEvent.create({
+            data: {
+              assetId: finalAssetId,
+              eventType: 'add',
+              price: parsedEntry,
+              volume: parsedEntry > 0 ? parsedAmount / parsedEntry : 0,
+              capitalBefore: asset.currentCapital,
+              capitalAfter: asset.currentCapital + parsedAmount,
+              pnlRealized: 0,
+              notes: notes ?? 'Tambah modal via Jurnal',
+            }
+          })
+        } else if (parsedActionType === 'reduce') {
+          // Kurangi Modal (Scale Out)
+          const newCapitalUsed = Math.max(0, asset.capitalUsed - parsedAmount)
+          await prisma.asset.update({
+            where: { id: finalAssetId },
+            data: {
+              capitalUsed: newCapitalUsed,
+              currentCapital: Math.max(0, asset.currentCapital - parsedAmount),
+            }
+          })
+          // Log event
+          await prisma.assetEvent.create({
+            data: {
+              assetId: finalAssetId,
+              eventType: 'reduce',
+              price: parsedEntry,
+              volume: parsedEntry > 0 ? parsedAmount / parsedEntry : 0,
+              capitalBefore: asset.currentCapital,
+              capitalAfter: Math.max(0, asset.currentCapital - parsedAmount),
+              pnlRealized: 0,
+              notes: notes ?? 'Kurangi modal via Jurnal',
+            }
+          })
+        } else if (parsedActionType === 'realize_pnl') {
+          // Realisasi Profit/Loss (Aset Tetap Aktif)
+          const pnlVal = parsedPnl || 0
+          const newAssetStatus = pnlVal > 0 ? 'partial_take_profit' : asset.status
+          await prisma.asset.update({
+            where: { id: finalAssetId },
+            data: {
+              realizedPnl: asset.realizedPnl + pnlVal,
+              currentCapital: Math.max(0, asset.currentCapital + pnlVal),
+              status: newAssetStatus,
+            }
+          })
+          // Log event
+          await prisma.assetEvent.create({
+            data: {
+              assetId: finalAssetId,
+              eventType: 'pnl_running',
+              price: parsedExit || parsedEntry,
+              volume: 0,
+              capitalBefore: asset.currentCapital,
+              capitalAfter: Math.max(0, asset.currentCapital + pnlVal),
+              pnlRealized: pnlVal,
+              notes: notes ?? 'Realisasi PnL berjalan via Jurnal',
+            }
+          })
+        } else if (['close', 'cut_loss', 'liquidation'].includes(parsedActionType)) {
+          // Tutup Posisi / Cut Loss / Likuidasi
+          const pnlVal = parsedPnl || 0
+          const finalStatus = parsedActionType === 'liquidation'
+            ? 'liquidated'
+            : (pnlVal >= 0 ? 'closed_profit' : 'closed_loss')
 
-      const parsedAmount = parseFloat(entryAmount || 0)
-      const parsedEntryPrice = parseFloat(entryPrice || 0)
-      const parsedLeverage = parseFloat(leverage || 1)
-      const assetVolume = parsedEntryPrice > 0 ? parsedAmount / parsedEntryPrice : 0
+          await prisma.asset.update({
+            where: { id: finalAssetId },
+            data: {
+              status: finalStatus,
+              realizedPnl: asset.realizedPnl + pnlVal,
+              currentCapital: asset.capitalUsed + asset.realizedPnl + pnlVal,
+            }
+          })
+          // Log event
+          await prisma.assetEvent.create({
+            data: {
+              assetId: finalAssetId,
+              eventType: parsedActionType === 'liquidation' ? 'liquidation' : 'close',
+              price: parsedExit || parsedEntry,
+              volume: asset.volume,
+              capitalBefore: asset.currentCapital,
+              capitalAfter: asset.capitalUsed + asset.realizedPnl + pnlVal,
+              pnlRealized: pnlVal,
+              notes: notes ?? `Posisi ditutup (${parsedActionType}) via Jurnal`,
+            }
+          })
+
+          // Update any other open trades for this asset
+          await prisma.trade.updateMany({
+            where: { assetId: finalAssetId, status: 'open' },
+            data: {
+              status: 'closed',
+              exitPrice: parsedExit,
+              exitDate: exitDate ? new Date(exitDate) : new Date(),
+              pnl: 0,
+              pnlPercent: 0,
+            }
+          })
+        }
+      }
+    } else {
+      // ── Auto-create Asset if not linked (Backwards compatibility, though UI enforces it now)
+      const newAssetStatus = ['close', 'cut_loss', 'liquidation', 'reduce'].includes(parsedActionType)
+        ? (parsedPnl !== null && parsedPnl >= 0 ? 'closed_profit' : 'closed_loss')
+        : 'active'
+
+      const assetVolume = parsedEntry > 0 ? parsedAmount / parsedEntry : 0
 
       const asset = await prisma.asset.create({
         data: {
@@ -61,26 +192,25 @@ export async function POST(req: Request) {
           name: symbol?.toUpperCase() || '',
           assetType: body.assetType ?? 'Crypto',
           platform: body.platform ?? '',
-          entryPrice: parsedEntryPrice,
+          entryPrice: parsedEntry,
           capitalUsed: parsedAmount,
           leverage: parsedLeverage,
           volume: assetVolume,
           status: newAssetStatus,
           notes: notes ?? '',
           entryDate: entryDate ? new Date(entryDate) : new Date(),
-          realizedPnl: status === 'closed' && parsedPnl !== null ? parsedPnl : 0,
-          currentCapital: parsedAmount + (status === 'closed' && parsedPnl !== null ? parsedPnl : 0),
+          realizedPnl: ['close', 'cut_loss', 'liquidation', 'reduce'].includes(parsedActionType) && parsedPnl !== null ? parsedPnl : 0,
+          currentCapital: parsedAmount + (['close', 'cut_loss', 'liquidation', 'reduce'].includes(parsedActionType) && parsedPnl !== null ? parsedPnl : 0),
         }
       })
       finalAssetId = asset.id
 
-      // Auto-create entry event
       if (parsedAmount > 0) {
         await prisma.assetEvent.create({
           data: {
             assetId: asset.id,
             eventType: 'entry',
-            price: parsedEntryPrice,
+            price: parsedEntry,
             volume: assetVolume,
             capitalBefore: 0,
             capitalAfter: parsedAmount,
@@ -90,13 +220,12 @@ export async function POST(req: Request) {
         })
       }
 
-      // If closed, also create close event
-      if (status === 'closed' && parsedPnl !== null) {
+      if (['close', 'cut_loss', 'liquidation', 'reduce'].includes(parsedActionType) && parsedPnl !== null) {
         await prisma.assetEvent.create({
           data: {
             assetId: asset.id,
             eventType: 'close',
-            price: exitPrice ? parseFloat(exitPrice) : parsedEntryPrice,
+            price: parsedExit || parsedEntry,
             volume: assetVolume,
             capitalBefore: parsedAmount,
             capitalAfter: parsedAmount + parsedPnl,
@@ -107,30 +236,32 @@ export async function POST(req: Request) {
       }
     }
 
+    // Create the Trade log
     const trade = await prisma.trade.create({
       data: {
         userId: DEFAULT_USER_ID,
         symbol: symbol?.toUpperCase(),
         assetId: finalAssetId,
-        entryPrice: parseFloat(entryPrice),
-        exitPrice: exitPrice ? parseFloat(exitPrice) : null,
+        entryPrice: parsedEntry,
+        exitPrice: parsedExit,
         entryDate: entryDate ? new Date(entryDate) : new Date(),
         exitDate: exitDate ? new Date(exitDate) : null,
-        entryAmount: parseFloat(entryAmount || 0),
-        leverage: parseFloat(leverage || 1),
-        positionSize: parseFloat(positionSize || 0),
+        entryAmount: parsedAmount,
+        leverage: parsedLeverage,
+        positionSize: parsedPositionSize,
         pnl: parsedPnl,
-        pnlPercent: pnlPercent !== undefined && pnlPercent !== null ? parseFloat(pnlPercent) : null,
+        pnlPercent: parsedPnlPercent,
         emotion: emotion ?? 'Neutral',
         notes: notes ?? '',
         strategy: strategy ?? '',
-        status: status ?? 'open',
+        status: ['close', 'cut_loss', 'liquidation', 'realize_pnl'].includes(parsedActionType) ? 'closed' : 'open',
+        actionType: parsedActionType,
       },
       include: { journal: true },
     })
 
-    // Auto-update wallet if trade is closed with PnL
-    if (status === 'closed' && parsedPnl !== null) {
+    // Auto-update wallet balance (tambah realized PnL jika closed)
+    if (['close', 'cut_loss', 'liquidation', 'realize_pnl'].includes(parsedActionType) && parsedPnl !== null && parsedPnl !== 0) {
       const wallet = await prisma.wallet.findFirst({ where: { userId: DEFAULT_USER_ID } })
       if (wallet) {
         await prisma.wallet.update({
@@ -308,36 +439,101 @@ export async function DELETE(req: Request) {
       }
     }
 
-    // 2. Delete trade journal & trade
-    await prisma.tradeJournal.deleteMany({ where: { tradeId: parseInt(id) } })
-    await prisma.trade.delete({ where: { id: parseInt(id) } })
-
-    // 3. Handle asset sync or deletion
+    // 2. Undo asset action if asset exists
     if (assetId) {
-      const otherTrades = await prisma.trade.findMany({ where: { assetId } })
-      if (otherTrades.length === 0) {
-        await prisma.asset.delete({ where: { id: assetId } })
-      } else {
-        // Update asset PnL from remaining closed trades
-        const remainingClosed = otherTrades.filter(t => t.status === 'closed' && t.pnl !== null)
-        const newRealizedPnl = remainingClosed.reduce((sum, t) => sum + (t.pnl ?? 0), 0)
-        
-        const openTrades = otherTrades.filter(t => t.status === 'open')
-        const asset = await prisma.asset.findUnique({ where: { id: assetId } })
-        if (asset) {
-          const newStatus = openTrades.length > 0 
-            ? 'active' 
-            : (newRealizedPnl >= 0 ? 'closed_profit' : 'closed_loss')
+      const asset = await prisma.asset.findUnique({ where: { id: assetId } })
+      if (asset) {
+        const actionType = trade.actionType ?? 'entry'
+        const entryAmount = trade.entryAmount || 0
+        const pnlVal = trade.pnl || 0
+
+        if (actionType === 'add') {
+          // Revert addition: subtract from capital
+          const newCapital = Math.max(0, asset.capitalUsed - entryAmount)
+          await prisma.asset.update({
+            where: { id: assetId },
+            data: {
+              capitalUsed: newCapital,
+              currentCapital: Math.max(0, asset.currentCapital - entryAmount),
+            }
+          })
+          // Delete add event
+          await prisma.assetEvent.deleteMany({
+            where: { assetId, eventType: 'add', capitalAfter: asset.currentCapital }
+          })
+        } else if (actionType === 'reduce') {
+          // Revert reduction: add back to capital
+          const newCapital = asset.capitalUsed + entryAmount
+          await prisma.asset.update({
+            where: { id: assetId },
+            data: {
+              capitalUsed: newCapital,
+              currentCapital: asset.currentCapital + entryAmount,
+            }
+          })
+          // Delete reduce event
+          await prisma.assetEvent.deleteMany({
+            where: { assetId, eventType: 'reduce', capitalAfter: asset.currentCapital }
+          })
+        } else if (actionType === 'realize_pnl') {
+          // Revert PnL realization: subtract from realizedPnl and currentCapital
+          await prisma.asset.update({
+            where: { id: assetId },
+            data: {
+              realizedPnl: asset.realizedPnl - pnlVal,
+              currentCapital: Math.max(0, asset.currentCapital - pnlVal),
+            }
+          })
+          // Delete running event
+          await prisma.assetEvent.deleteMany({
+            where: { assetId, eventType: 'pnl_running', pnlRealized: pnlVal }
+          })
+        } else if (['close', 'cut_loss', 'liquidation'].includes(actionType)) {
+          // Revert close/liquidation: reopen asset and trades
+          // Check if there was any reduce event remaining to decide status
+          const hasReduce = await prisma.assetEvent.findFirst({
+            where: { assetId, eventType: 'reduce' }
+          })
+          const revertedStatus = hasReduce ? 'partial_take_profit' : 'active'
 
           await prisma.asset.update({
             where: { id: assetId },
             data: {
-              realizedPnl: newRealizedPnl,
-              currentCapital: asset.capitalUsed + newRealizedPnl,
-              status: newStatus,
+              status: revertedStatus,
+              realizedPnl: asset.realizedPnl - pnlVal,
+              currentCapital: asset.currentCapital - pnlVal,
+            }
+          })
+
+          // Delete close event
+          await prisma.assetEvent.deleteMany({
+            where: { assetId, eventType: { in: ['close', 'liquidation'] } }
+          })
+
+          // Reopen all entry and add trades for this asset
+          await prisma.trade.updateMany({
+            where: { assetId, actionType: { in: ['entry', 'add'] } },
+            data: {
+              status: 'open',
+              exitPrice: null,
+              exitDate: null,
+              pnl: null,
+              pnlPercent: null,
             }
           })
         }
+      }
+    }
+
+    // 3. Delete trade journal & trade
+    await prisma.tradeJournal.deleteMany({ where: { tradeId: parseInt(id) } })
+    await prisma.trade.delete({ where: { id: parseInt(id) } })
+
+    // 4. Handle asset deletion if no trades left
+    if (assetId) {
+      const remainingTrades = await prisma.trade.findMany({ where: { assetId } })
+      if (remainingTrades.length === 0) {
+        await prisma.asset.delete({ where: { id: assetId } })
       }
     }
 

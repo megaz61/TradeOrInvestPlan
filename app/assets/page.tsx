@@ -54,8 +54,8 @@ const assetSchema = z.object({
   transactionType: z.enum(['Spot', 'Margin']),
   platform: z.string().default(''),
   entryPrice: z.coerce.number().min(0),
-  takeProfit: z.coerce.number().optional(),
-  stopLoss: z.coerce.number().optional(),
+  takeProfit: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
+  stopLoss: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
   volume: z.coerce.number().min(0).default(0),
   leverage: z.coerce.number().min(0.01).default(1),
   capitalUsed: z.coerce.number().min(0).default(0),
@@ -63,8 +63,8 @@ const assetSchema = z.object({
   entryDate: z.string(),
   notes: z.string().default(''),
   status: z.enum(['planned', 'active', 'partial_take_profit', 'closed_profit', 'closed_loss', 'liquidated']),
-  exitPrice: z.coerce.number().optional(),
-  realizedPnl: z.coerce.number().optional(),
+  exitPrice: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
+  realizedPnl: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
 })
 type AssetForm = z.infer<typeof assetSchema>
 
