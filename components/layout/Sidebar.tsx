@@ -73,7 +73,7 @@ export function Sidebar() {
           sidebarCollapsed ? 'justify-center' : 'justify-between'
         )}>
           {!sidebarCollapsed && (
-            <span className="text-sm font-bold text-blue-400 tracking-wide">TradePlanner</span>
+            <span className="text-sm font-bold text-blue-400 tracking-wide">Trade Or Invest Planner</span>
           )}
           <button
             onClick={toggleSidebar}
@@ -106,7 +106,7 @@ export function Sidebar() {
           {/* Drawer */}
           <aside className="md:hidden fixed inset-y-0 left-0 z-50 w-64 flex flex-col bg-[#111827] border-r border-[#1F2937] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[#1F2937] h-14 px-4">
-              <span className="text-sm font-bold text-blue-400 tracking-wide">TradePlanner</span>
+              <span className="text-sm font-bold text-blue-400 tracking-wide">Trade or Invest Planner</span>
               <button
                 onClick={() => setMobileMenuOpen(false)}
                 className="p-1.5 rounded-md text-gray-500 hover:text-gray-300 hover:bg-[#1F2937] transition-colors"
