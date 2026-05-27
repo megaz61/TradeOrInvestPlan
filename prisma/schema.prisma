@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  name      String    @default("Trader")
+  email     String    @unique @default("trader@local.app")
+  createdAt DateTime  @default(now())
+
+  wallets             Wallet[]
+  assets              Asset[]
+  trades              Trade[]
+  watchlist           Watchlist[]
+  riskProfile         RiskProfile?
+  compoundSimulations CompoundSimulation[]
+}
+
+model Wallet {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  name            String   @default("Main Wallet")
+  currency        String   @default("USD")
+  totalBalance    Float    @default(0)
+  tradingBalance  Float    @default(0)
+  usedCapital     Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Asset {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  // Identitas
+  symbol          String    @default("")
+  productName     String    @default("")       // untuk Reksadana
+  name            String    @default("")
+  assetType       String    @default("Crypto") // Crypto|Forex|Stock|Commodity|Reksadana
+  transactionType String    @default("Spot")   // Spot|Margin
+  platform        String    @default("")       // Binance, Bybit, dll.
+  // Harga & Volume
+  entryPrice      Float     @default(0)
+  takeProfit      Float?
+  stopLoss        Float?
+  volume          Float     @default(0)
+  leverage        Float     @default(1)
+  // Modal & PnL
+  capitalUsed     Float     @default(0)        // modal yang di-deploy untuk posisi ini
+  fee             Float     @default(0)        // biaya admin / fee transaksi (opsional)
+  currentCapital  Float     @default(0)        // nilai terkini setelah unrealized PnL
+  realizedPnl     Float     @default(0)        // PnL yang sudah terealisasi
+  unrealizedPnl   Float     @default(0)        // estimasi PnL saat ini
+  // Meta
+  entryDate       DateTime  @default(now())
+  notes           String    @default("")
+  status          String    @default("planned")
+  // planned | active | partial_take_profit | closed_profit | closed_loss | liquidated
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user   User         @relation(fields: [userId], references: [id])
+  trades Trade[]
+  events AssetEvent[]
+
+  @@index([userId])
+}
+
+// Event log per asset — track history setiap perubahan posisi
+model AssetEvent {
+  id             Int      @id @default(autoincrement())
+  assetId        Int
+  eventType      String   // entry|add|reduce|close|liquidation|withdrawal
+  price          Float    @default(0)
+  volume         Float    @default(0)
+  capitalBefore  Float    @default(0)
+  capitalAfter   Float    @default(0)
+  pnlRealized    Float    @default(0)
+  notes          String   @default("")
+  createdAt      DateTime @default(now())
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+}
+
+model Trade {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  assetId      Int?
+  symbol       String
+  entryPrice   Float
+  exitPrice    Float?
+  entryDate    DateTime  @default(now())
+  exitDate     DateTime?
+  entryAmount  Float
+  leverage     Float     @default(1)
+  positionSize Float     @default(0)
+  pnl          Float?
+  pnlPercent   Float?
+  emotion      String    @default("Neutral")
+  notes        String    @default("")
+  strategy     String    @default("")
+  status       String    @default("open")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user    User          @relation(fields: [userId], references: [id])
+  asset   Asset?        @relation(fields: [assetId], references: [id])
+  journal TradeJournal?
+
+  @@index([userId])
+  @@index([assetId])
+}
+
+model TradeJournal {
+  id        Int      @id @default(autoincrement())
+  tradeId   Int      @unique
+  emotion   String   @default("Neutral")
+  mistakes  String   @default("")
+  analysis  String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trade Trade @relation(fields: [tradeId], references: [id])
+}
+
+model Watchlist {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  symbol      String
+  targetPrice Float?
+  currentNote String   @default("")
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model RiskProfile {
+  id                Int     @id @default(autoincrement())
+  userId            Int     @unique
+  maxRiskPercent    Float   @default(2)
+  preferredLeverage Float   @default(1)
+  maxDrawdown       Float   @default(20)
+  currency          String  @default("USD")
+  theme             String  @default("dark")
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model CompoundSimulation {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  name           String   @default("Simulation")
+  initialCapital Float
+  dailyPercent   Float
+  durationDays   Int
+  finalValue     Float    @default(0)
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}

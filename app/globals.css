@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0B0F19;
+  --card: #111827;
+  --border: #1F2937;
+  --text: #E5E7EB;
+  --accent: #3B82F6;
+  --profit: #10B981;
+  --loss: #EF4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+  /* Prevent layout shift from scrollbar appearing */
+  scrollbar-gutter: stable;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  /* Prevent horizontal overflow on mobile */
+  overflow-x: hidden;
+}
+
+/* Mobile: prevent double-tap zoom on form elements */
+input, select, textarea, button {
+  touch-action: manipulation;
+}
+
+/* Scrollbar — thin on desktop, hidden on mobile */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #374151;
+  }
+}
+
+/* Sticky table header */
+.sticky-header thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--card);
+}
+
+/* Number formatting */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Profit/Loss colors */
+.profit { color: var(--profit); }
+.loss { color: var(--loss); }
+
+/* Mobile: ensure dialog/modal doesn't overflow */
+[role="dialog"] {
+  max-height: 95dvh;
+  overflow-y: auto;
+}
+
+/* Safe area support for notch devices (iPhone) */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .h-dvh {
+    height: 100dvh;
+  }
+}
