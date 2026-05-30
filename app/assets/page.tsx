@@ -221,86 +221,151 @@ export default function AssetsPage() {
 
   const fmt = (v: number) => formatCurrency(v, currency)
 
-  const { plannedCapital, nonPlannedCapital } = useMemo(() => {
+  const { plannedCapital, nonPlannedCapital, totalFee } = useMemo(() => {
     let planned = 0
     let nonPlanned = 0
+    let feeSum = 0
     for (const a of assets) {
       const totalCapital = a.capitalUsed + (a.fee || 0)
+      feeSum += (a.fee || 0)
       if (a.status === 'planned') {
         planned += totalCapital
       } else {
         nonPlanned += totalCapital
       }
     }
-    return { plannedCapital: planned, nonPlannedCapital: nonPlanned }
+    return { plannedCapital: planned, nonPlannedCapital: nonPlanned, totalFee: feeSum }
+  }, [assets])
+
+  const chartData = useMemo(() => {
+    let spotCapital = 0
+    let marginCapital = 0
+
+    const spotTypeMap: Record<string, number> = {}
+    const marginTypeMap: Record<string, number> = {}
+
+    // Only count active positions to reflect current active capital allocation
+    const activeAssets = assets.filter(a => ['active', 'partial_take_profit'].includes(a.status))
+
+    for (const a of activeAssets) {
+      const cap = a.capitalUsed + (a.fee || 0)
+      const isSpot = a.transactionType === 'Spot'
+
+      if (isSpot) {
+        spotCapital += cap
+        spotTypeMap[a.assetType] = (spotTypeMap[a.assetType] || 0) + cap
+      } else {
+        marginCapital += cap
+        marginTypeMap[a.assetType] = (marginTypeMap[a.assetType] || 0) + cap
+      }
+    }
+
+    const transactionTypeData = [
+      { name: 'Spot / Investasi', value: spotCapital, color: '#10B981' },
+      { name: 'Margin / Futures', value: marginCapital, color: '#3B82F6' },
+    ]
+
+    const ASSET_COLORS: Record<string, string> = {
+      Crypto: '#8B5CF6',
+      Forex: '#F59E0B',
+      Stock: '#EC4899',
+      Commodity: '#EF4444',
+      Reksadana: '#10B981',
+    }
+
+    const spotTypeData = Object.entries(spotTypeMap).map(([type, value]) => ({
+      name: type,
+      value,
+      color: ASSET_COLORS[type] || '#6B7280',
+    }))
+
+    const marginTypeData = Object.entries(marginTypeMap).map(([type, value]) => ({
+      name: type,
+      value,
+      color: ASSET_COLORS[type] || '#6B7280',
+    }))
+
+    return {
+      transactionTypeData,
+      spotTypeData,
+      marginTypeData,
+      hasActiveSpot: spotCapital > 0,
+      hasActiveMargin: marginCapital > 0,
+      hasActive: (spotCapital + marginCapital) > 0,
+      totalActive: spotCapital + marginCapital,
+      totalSpotActive: spotCapital,
+      totalMarginActive: marginCapital,
+    }
   }, [assets])
 
   return (
     <div className="space-y-4">
-      {/* Capital Summary Cards & Chart */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="md:col-span-2">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-gray-200">Ringkasan Alokasi Modal Aset</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
-              <div className="p-3 md:p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center">
-                <span className="text-[10px] md:text-xs text-gray-400">Modal Direncanakan (Planned)</span>
-                <span className="text-base md:text-lg font-bold text-gray-200 mt-1 tabular-nums">
-                  {fmt(plannedCapital)}
-                </span>
-                <span className="text-[9px] md:text-[10px] text-gray-500 mt-1">
-                  Aset dengan status Planned
-                </span>
-              </div>
-              <div className="p-3 md:p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center">
-                <span className="text-[10px] md:text-xs text-gray-400">Modal Digunakan (Non-Planned)</span>
-                <span className="text-base md:text-lg font-bold text-blue-400 mt-1 tabular-nums">
-                  {fmt(nonPlannedCapital)}
-                </span>
-                <span className="text-[9px] md:text-[10px] text-gray-500 mt-1">
-                  Aset aktif dan terealisasi
-                </span>
-              </div>
-              <div className="p-3 md:p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center">
-                <span className="text-[10px] md:text-xs text-gray-400">Total Modal Aset (Planned + Non Planned)</span>
-                <span className="text-base md:text-lg font-bold text-emerald-400 mt-1 tabular-nums">
-                  {fmt(plannedCapital + nonPlannedCapital)}
-                </span>
-                <span className="text-[9px] md:text-[10px] text-gray-500 mt-1">
-                  Seluruh alokasi modal aset
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Baris 1: Summary Cards (Full Width) */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center shadow-md">
+          <span className="text-[10px] md:text-xs text-gray-400">Modal Direncanakan (Planned)</span>
+          <span className="text-lg md:text-xl font-bold text-gray-200 mt-1 tabular-nums">
+            {fmt(plannedCapital)}
+          </span>
+          <span className="text-[9px] md:text-[10px] text-gray-500 mt-1">
+            Aset dengan status Planned
+          </span>
+        </div>
+        <div className="p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center shadow-md">
+          <span className="text-[10px] md:text-xs text-gray-400">Modal Digunakan (Non-Planned)</span>
+          <span className="text-lg md:text-xl font-bold text-blue-400 mt-1 tabular-nums">
+            {fmt(nonPlannedCapital)}
+          </span>
+          <span className="text-[9px] md:text-[10px] text-gray-500 mt-1">
+            Aset aktif dan terealisasi
+          </span>
+        </div>
+        <div className="p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center shadow-md">
+          <span className="text-[10px] md:text-xs text-gray-400">Total Modal Aset (Planned + Non Planned)</span>
+          <span className="text-lg md:text-xl font-bold text-emerald-400 mt-1 tabular-nums">
+            {fmt(plannedCapital + nonPlannedCapital)}
+          </span>
+          <span className="text-[9px] md:text-[10px] text-gray-500 mt-1">
+            Seluruh alokasi modal aset
+          </span>
+        </div>
+        <div className="p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center shadow-md">
+          <span className="text-[10px] md:text-xs text-gray-400">Total Fee Aset</span>
+          <span className="text-lg md:text-xl font-bold text-amber-500 mt-1 tabular-nums">
+            {fmt(totalFee)}
+          </span>
+          <span className="text-[9px] md:text-[10px] text-gray-500 mt-1">
+            Akumulasi biaya admin/fee aset
+          </span>
+        </div>
+      </div>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-gray-200">Distribusi Modal</CardTitle>
+      {/* Baris 2: 3 Chart Visualisasi Alokasi Modal Aktif */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Chart 1: Spot vs Margin */}
+        <Card className="flex flex-col border-[#1F2937] bg-[#111827]/40">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-semibold text-gray-300">Alokasi Spot vs Margin (Modal Aktif)</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center min-h-[140px]">
-            {plannedCapital === 0 && nonPlannedCapital === 0 ? (
-              <span className="text-xs text-gray-500">Belum ada alokasi modal</span>
+          <CardContent className="flex flex-col items-center justify-center flex-1 min-h-[160px] pb-4">
+            {!chartData.hasActive ? (
+              <span className="text-xs text-gray-500 my-auto">Belum ada alokasi modal berjalan</span>
             ) : (
-              <div className="w-full flex items-center justify-around gap-2">
+              <div className="w-full flex items-center justify-between gap-2">
                 <div className="h-[100px] w-[100px] relative shrink-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={[
-                          { name: 'Planned', value: plannedCapital, color: '#9CA3AF' },
-                          { name: 'Non-Planned', value: nonPlannedCapital, color: '#3B82F6' },
-                        ]}
+                        data={chartData.transactionTypeData}
                         cx="50%"
                         cy="50%"
                         innerRadius={25}
                         outerRadius={40}
                         dataKey="value"
                       >
-                        <Cell fill="#9CA3AF" />
-                        <Cell fill="#3B82F6" />
+                        {chartData.transactionTypeData.map((entry, idx) => (
+                          <Cell key={`cell-${idx}`} fill={entry.color} />
+                        ))}
                       </Pie>
                       <Tooltip
                         contentStyle={{ background: '#111827', border: '1px solid #1F2937', borderRadius: 6, fontSize: 10 }}
@@ -309,15 +374,118 @@ export default function AssetsPage() {
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="flex flex-col gap-2 text-[11px] text-gray-300">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-gray-400 shrink-0" />
-                    <span>Planned ({((plannedCapital / (plannedCapital + nonPlannedCapital || 1)) * 100).toFixed(1)}%)</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
-                    <span>Non-Planned ({((nonPlannedCapital / (plannedCapital + nonPlannedCapital || 1)) * 100).toFixed(1)}%)</span>
-                  </div>
+                <div className="flex flex-col gap-2 text-[10px] text-gray-300 flex-1 pl-2">
+                  {chartData.transactionTypeData.map((item, idx) => (
+                    <div key={idx} className="flex flex-col">
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                        <span className="truncate max-w-[90px]">{item.name}</span>
+                      </div>
+                      <span className="text-gray-400 font-mono pl-3.5">
+                        {fmt(item.value)} ({((item.value / (chartData.totalActive || 1)) * 100).toFixed(1)}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Chart 2: Tipe Aset Spot */}
+        <Card className="flex flex-col border-[#1F2937] bg-[#111827]/40">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-semibold text-gray-300">Tipe Aset (Spot / Investasi)</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center flex-1 min-h-[160px] pb-4">
+            {!chartData.hasActiveSpot ? (
+              <span className="text-xs text-gray-500 my-auto">Belum ada alokasi Spot aktif</span>
+            ) : (
+              <div className="w-full flex items-center justify-between gap-2">
+                <div className="h-[100px] w-[100px] relative shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={chartData.spotTypeData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={25}
+                        outerRadius={40}
+                        dataKey="value"
+                      >
+                        {chartData.spotTypeData.map((entry, idx) => (
+                          <Cell key={`cell-${idx}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{ background: '#111827', border: '1px solid #1F2937', borderRadius: 6, fontSize: 10 }}
+                        formatter={(v: number) => [fmt(v)]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex flex-col gap-1.5 text-[10px] text-gray-300 flex-1 pl-2 max-h-[120px] overflow-y-auto font-sans">
+                  {chartData.spotTypeData.map((item, idx) => (
+                    <div key={idx} className="flex flex-col">
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                        <span>{item.name}</span>
+                      </div>
+                      <span className="text-gray-400 font-mono pl-3.5">
+                        {fmt(item.value)} ({((item.value / (chartData.totalSpotActive || 1)) * 100).toFixed(1)}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Chart 3: Tipe Aset Margin */}
+        <Card className="flex flex-col border-[#1F2937] bg-[#111827]/40">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-semibold text-gray-300">Tipe Aset (Margin / Futures)</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center flex-1 min-h-[160px] pb-4">
+            {!chartData.hasActiveMargin ? (
+              <span className="text-xs text-gray-500 my-auto">Belum ada alokasi Margin aktif</span>
+            ) : (
+              <div className="w-full flex items-center justify-between gap-2">
+                <div className="h-[100px] w-[100px] relative shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={chartData.marginTypeData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={25}
+                        outerRadius={40}
+                        dataKey="value"
+                      >
+                        {chartData.marginTypeData.map((entry, idx) => (
+                          <Cell key={`cell-${idx}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{ background: '#111827', border: '1px solid #1F2937', borderRadius: 6, fontSize: 10 }}
+                        formatter={(v: number) => [fmt(v)]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex flex-col gap-1.5 text-[10px] text-gray-300 flex-1 pl-2 max-h-[120px] overflow-y-auto font-sans">
+                  {chartData.marginTypeData.map((item, idx) => (
+                    <div key={idx} className="flex flex-col">
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                        <span>{item.name}</span>
+                      </div>
+                      <span className="text-gray-400 font-mono pl-3.5">
+                        {fmt(item.value)} ({((item.value / (chartData.totalMarginActive || 1)) * 100).toFixed(1)}%)
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

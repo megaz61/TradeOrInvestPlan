@@ -199,9 +199,9 @@ export interface ApiResponse<T> {
 
 // Platform options
 export const PLATFORM_OPTIONS = [
-  'Binance', 'Bybit', 'OKX', 'Indodax', 'Tokocrypto',
+  'Binance', 'Bibit', 'OKX', 'Indodax', 'Floq',
   'MetaTrader 4', 'MetaTrader 5', 'TradingView',
-  'Bibit', 'Ajaib', 'IPOT', 'Pluang', 'Stockbit',
+  'Bybit', 'Ajaib', 'IPOT/Stockbit', 'Pluang', 'Stockbit', 'TokoCrypto',
   'Manual / Custom',
 ] as const
 
