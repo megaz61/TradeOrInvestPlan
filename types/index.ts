@@ -49,6 +49,7 @@ export interface Asset {
   unrealizedPnl: number
   entryDate: string
   notes: string
+  chartUrl?: string
   status: AssetStatus
   createdAt: string
   updatedAt: string

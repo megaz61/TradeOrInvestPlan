@@ -62,6 +62,7 @@ model Asset {
   // Meta
   entryDate       DateTime  @default(now())
   notes           String    @default("")
+  chartUrl        String    @default("")
   status          String    @default("planned")
   // planned | active | partial_take_profit | closed_profit | closed_loss | liquidated
   createdAt       DateTime  @default(now())

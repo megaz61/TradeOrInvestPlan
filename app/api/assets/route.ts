@@ -50,7 +50,7 @@ export async function POST(req: Request) {
       symbol, productName, name, assetType, transactionType, platform,
       entryPrice, takeProfit, stopLoss,
       volume, leverage, capitalUsed, fee,
-      entryDate, notes, status,
+      entryDate, notes, chartUrl, status,
     } = body
 
     const parsedCapital = parseFloat(capitalUsed) || 0
@@ -81,6 +81,7 @@ export async function POST(req: Request) {
         unrealizedPnl: 0,
         entryDate: entryDate ? new Date(entryDate) : new Date(),
         notes: notes ?? '',
+        chartUrl: chartUrl ?? '',
         status: newStatus,
       },
     })
@@ -285,6 +286,7 @@ export async function PATCH(req: Request) {
         ...(fields.unrealizedPnl !== undefined && { unrealizedPnl: parseFloat(fields.unrealizedPnl) }),
         ...(fields.entryDate && { entryDate: new Date(fields.entryDate) }),
         ...(fields.notes !== undefined && { notes: fields.notes }),
+        ...(fields.chartUrl !== undefined && { chartUrl: fields.chartUrl }),
         ...(fields.status && { status: newStatus }),
         realizedPnl: totalRealizedPnl,
         ...(isNowClosed && { currentCapital: newCapital + totalRealizedPnl }),

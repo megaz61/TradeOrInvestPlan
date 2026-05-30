@@ -17,7 +17,7 @@ import { useWalletStore } from '@/store/walletStore'
 import { useAssetStore } from '@/store/assetStore'
 import { formatDate, getPnLColor, formatCurrency } from '@/utils/format'
 import { calculateLiquidationPrice } from '@/lib/calculations'
-import { Plus, Pencil, Trash2, Layers, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, Pencil, Trash2, Layers, AlertTriangle, ChevronDown, ChevronUp, Eye, TrendingUp } from 'lucide-react'
 import type { Asset, AssetType, AssetStatus, TransactionType, Currency } from '@/types'
 import { PLATFORM_OPTIONS } from '@/types'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
@@ -62,6 +62,7 @@ const assetSchema = z.object({
   fee: z.coerce.number().min(0).default(0),
   entryDate: z.string(),
   notes: z.string().default(''),
+  chartUrl: z.string().default(''),
   status: z.enum(['planned', 'active', 'partial_take_profit', 'closed_profit', 'closed_loss', 'liquidated']),
   exitPrice: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
   realizedPnl: z.preprocess((val) => (val === '' || val === null || val === undefined ? undefined : val), z.coerce.number().optional()),
@@ -76,6 +77,8 @@ export default function AssetsPage() {
 
   const [open, setOpen] = useState(false)
   const [editAsset, setEditAsset] = useState<Asset | null>(null)
+  const [detailAsset, setDetailAsset] = useState<Asset | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterType, setFilterType] = useState('all')
@@ -90,7 +93,7 @@ export default function AssetsPage() {
       symbol: '', productName: '', name: '',
       assetType: 'Crypto', transactionType: 'Spot', platform: '',
       entryPrice: 0, volume: 0, leverage: 1, capitalUsed: 0, fee: 0,
-      notes: '', status: 'planned',
+      notes: '', chartUrl: '', status: 'planned',
       entryDate: new Date().toISOString().split('T')[0],
     },
   })
@@ -120,6 +123,7 @@ export default function AssetsPage() {
       if (search) params.set('search', search)
       if (filterStatus !== 'all') params.set('status', filterStatus)
       if (filterType !== 'all') params.set('type', filterType)
+      params.set('withEvents', 'true')
       const res = await fetch(`/api/assets?${params}`)
       const data = await res.json()
       setAssets(data.data ?? [])
@@ -137,7 +141,7 @@ export default function AssetsPage() {
       symbol: '', productName: '', name: '',
       assetType: 'Crypto', transactionType: 'Spot', platform: '',
       entryPrice: 0, volume: 0, leverage: 1, capitalUsed: 0, fee: 0,
-      notes: '', status: 'planned',
+      notes: '', chartUrl: '', status: 'planned',
       entryDate: new Date().toISOString().split('T')[0],
       exitPrice: undefined,
       realizedPnl: undefined,
@@ -164,6 +168,7 @@ export default function AssetsPage() {
       fee: asset.fee ?? 0,
       entryDate: asset.entryDate.split('T')[0],
       notes: asset.notes,
+      chartUrl: asset.chartUrl || '',
       status: asset.status as AssetStatus,
       exitPrice: asset.trades?.[0]?.exitPrice ?? undefined,
       realizedPnl: asset.realizedPnl ?? undefined,
@@ -301,7 +306,7 @@ export default function AssetsPage() {
   return (
     <div className="space-y-4">
       {/* Baris 1: Summary Cards (Full Width) */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-4 rounded-lg bg-[#111827] border border-[#1F2937] flex flex-col justify-center shadow-md">
           <span className="text-[10px] md:text-xs text-gray-400">Modal Direncanakan (Planned)</span>
           <span className="text-lg md:text-xl font-bold text-gray-200 mt-1 tabular-nums">
@@ -773,6 +778,11 @@ export default function AssetsPage() {
                   <Input {...form.register('notes')} placeholder="Analisis, alasan masuk..." />
                 </div>
 
+                <div className="space-y-1.5">
+                  <Label>Link Chart (Opsional)</Label>
+                  <Input {...form.register('chartUrl')} placeholder="https://tradingview.com/chart/..." />
+                </div>
+
                 <div className="flex justify-end gap-2 pt-1 border-t border-[#1F2937]">
                   <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>Batal</Button>
                   <Button type="submit" size="sm" disabled={saving}>{saving ? 'Menyimpan...' : 'Simpan'}</Button>
@@ -817,7 +827,20 @@ export default function AssetsPage() {
                       <TableRow key={asset.id}>
                         <TableCell>
                           <div>
-                            <p className="font-mono font-semibold text-blue-400 text-xs">{displayName}</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-mono font-semibold text-blue-400 text-xs">{displayName}</p>
+                              {asset.chartUrl && (
+                                <a
+                                  href={asset.chartUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-gray-500 hover:text-amber-400 transition-colors"
+                                  title="Buka Chart"
+                                >
+                                  <TrendingUp className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
                             {asset.name && asset.assetType !== 'Reksadana' && (
                               <p className="text-[10px] text-gray-500 truncate max-w-[80px]">{asset.name}</p>
                             )}
@@ -854,11 +877,14 @@ export default function AssetsPage() {
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-xs text-gray-500">{formatDate(asset.entryDate)}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => openEdit(asset)} className="p-1 hover:text-blue-400 transition-colors">
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => { setDetailAsset(asset); setDetailOpen(true) }} className="p-1 hover:text-blue-400 transition-colors" title="Lihat Detail">
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                            <button onClick={() => openEdit(asset)} className="p-1 hover:text-blue-400 transition-colors" title="Edit">
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
-                            <button onClick={() => deleteAsset(asset.id)} className="p-1 hover:text-red-400 transition-colors">
+                            <button onClick={() => deleteAsset(asset.id)} className="p-1 hover:text-red-400 transition-colors" title="Hapus">
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>
@@ -872,6 +898,170 @@ export default function AssetsPage() {
           )}
         </CardContent>
       </Card>
+      {/* Dialog Detail Aset */}
+      {detailAsset && (
+        <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-[#111827] text-gray-100 border-[#1F2937]">
+            <DialogHeader>
+              <DialogTitle className="text-base font-semibold flex items-center justify-between">
+                <span>Detail Aset: {detailAsset.assetType === 'Reksadana' ? detailAsset.productName : detailAsset.symbol}</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${STATUS_COLORS[detailAsset.status] ?? 'text-gray-400'}`}>
+                  {STATUS_OPTIONS.find(s => s.value === detailAsset.status)?.label ?? detailAsset.status}
+                </span>
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 text-xs mt-2">
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 gap-3 bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                <div>
+                  <p className="text-gray-400 font-medium">Nama Aset</p>
+                  <p className="text-gray-200 mt-0.5">{detailAsset.name || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Platform / Exchange</p>
+                  <p className="text-gray-200 mt-0.5">{detailAsset.platform || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Tipe Transaksi</p>
+                  <p className="text-gray-200 mt-0.5">{detailAsset.transactionType}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Tanggal Entry</p>
+                  <p className="text-gray-200 mt-0.5">{formatDate(detailAsset.entryDate)}</p>
+                </div>
+              </div>
+
+              {/* Financial Info Grid */}
+              <div className="grid grid-cols-3 gap-3 bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                <div>
+                  <p className="text-gray-400 font-medium">Harga Entry</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{detailAsset.entryPrice > 0 ? detailAsset.entryPrice.toLocaleString() : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Volume / Quantity</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{detailAsset.volume}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Leverage</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{detailAsset.leverage > 1 ? `${detailAsset.leverage}x` : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Modal Terpakai</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{fmt(detailAsset.capitalUsed)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Fee Transaksi</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{fmt(detailAsset.fee)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Modal Sekarang</p>
+                  <p className="text-[#10B981] font-mono mt-0.5">{fmt(detailAsset.currentCapital)}</p>
+                </div>
+              </div>
+
+              {/* PnL Section */}
+              <div className="grid grid-cols-2 gap-3 bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                <div>
+                  <p className="text-gray-400 font-medium">Realized PnL</p>
+                  <p className={`font-mono font-medium mt-0.5 ${detailAsset.realizedPnl !== 0 ? getPnLColor(detailAsset.realizedPnl) : 'text-gray-500'}`}>
+                    {detailAsset.realizedPnl !== 0 ? `${detailAsset.realizedPnl >= 0 ? '+' : ''}${fmt(detailAsset.realizedPnl)}` : '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Unrealized PnL</p>
+                  <p className={`font-mono font-medium mt-0.5 ${detailAsset.unrealizedPnl !== 0 ? getPnLColor(detailAsset.unrealizedPnl) : 'text-gray-500'}`}>
+                    {detailAsset.unrealizedPnl !== 0 ? `${detailAsset.unrealizedPnl >= 0 ? '+' : ''}${fmt(detailAsset.unrealizedPnl)}` : '—'}
+                  </p>
+                </div>
+              </div>
+
+              {/* TP & SL */}
+              {detailAsset.assetType !== 'Reksadana' && (
+                <div className="grid grid-cols-2 gap-3 bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                  <div>
+                    <p className="text-emerald-400 font-medium">Take Profit</p>
+                    <p className="text-emerald-300 font-mono mt-0.5">{detailAsset.takeProfit ? detailAsset.takeProfit.toLocaleString() : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-red-400 font-medium">Stop Loss</p>
+                    <p className="text-red-300 font-mono mt-0.5">{detailAsset.stopLoss ? detailAsset.stopLoss.toLocaleString() : '—'}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Chart Link */}
+              {detailAsset.chartUrl && (
+                <div className="bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                  <p className="text-gray-400 font-medium">Link Chart</p>
+                  <a
+                    href={detailAsset.chartUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 mt-1 font-medium transition-colors"
+                  >
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    Buka Link Chart Analisis
+                  </a>
+                </div>
+              )}
+
+              {/* Notes */}
+              <div>
+                <p className="text-gray-400 font-medium">Catatan</p>
+                <div className="bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937] text-gray-300 mt-1 whitespace-pre-wrap">
+                  {detailAsset.notes || 'Tidak ada catatan.'}
+                </div>
+              </div>
+
+              {/* History Events */}
+              {detailAsset.events && detailAsset.events.length > 0 && (
+                <div>
+                  <p className="text-gray-400 font-medium mb-1.5">Riwayat Transaksi Aset</p>
+                  <div className="border border-[#1F2937] rounded-lg overflow-hidden bg-[#1F2937]/10">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-[#1F2937]/50 text-gray-400 uppercase text-[9px] tracking-wider border-b border-[#1F2937]">
+                        <tr>
+                          <th className="p-2">Aksi</th>
+                          <th className="p-2">Harga</th>
+                          <th className="p-2">Volume</th>
+                          <th className="p-2">Modal Sdhnya</th>
+                          <th className="p-2">Modal Stlhnya</th>
+                          <th className="p-2">PnL</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#1F2937] text-gray-300 font-mono">
+                        {detailAsset.events.map((ev: any) => (
+                          <tr key={ev.id}>
+                            <td className="p-2 font-sans font-medium capitalize">
+                              <span className={`px-1 rounded text-[9px] ${
+                                ev.eventType === 'entry' ? 'bg-blue-500/20 text-blue-400' :
+                                ev.eventType === 'add' ? 'bg-emerald-500/20 text-emerald-400' :
+                                ev.eventType === 'reduce' ? 'bg-yellow-500/20 text-yellow-400' :
+                                ev.eventType === 'close' ? 'bg-gray-500/20 text-gray-400' :
+                                ev.eventType === 'liquidation' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20'
+                              }`}>
+                                {ev.eventType}
+                              </span>
+                            </td>
+                            <td className="p-2">{ev.price ? ev.price.toLocaleString() : '—'}</td>
+                            <td className="p-2">{ev.volume}</td>
+                            <td className="p-2">{fmt(ev.capitalBefore)}</td>
+                            <td className="p-2">{fmt(ev.capitalAfter)}</td>
+                            <td className={`p-2 ${ev.pnlRealized !== 0 ? getPnLColor(ev.pnlRealized) : 'text-gray-400'}`}>
+                              {ev.pnlRealized !== 0 ? `${ev.pnlRealized >= 0 ? '+' : ''}${fmt(ev.pnlRealized)}` : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

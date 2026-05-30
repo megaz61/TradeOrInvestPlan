@@ -19,7 +19,7 @@ import { StatCard } from '@/components/ui/StatCard'
 import { useWalletStore } from '@/store/walletStore'
 import { calculateTradeStats } from '@/lib/calculations'
 import { formatCurrency, formatPercent, getPnLColor, getEmotionColor, formatDate } from '@/utils/format'
-import { Plus, Trash2, BookOpen, CheckCircle, Wallet } from 'lucide-react'
+import { Plus, Trash2, BookOpen, CheckCircle, Wallet, Eye, TrendingUp } from 'lucide-react'
 import type { Trade, Emotion, Currency, Asset } from '@/types'
 
 const EMOTIONS: Emotion[] = ['Fear', 'Greed', 'FOMO', 'Neutral', 'Confident']
@@ -61,6 +61,8 @@ export default function JournalPage() {
   const [timeFilter, setTimeFilter] = useState('all')
   const [walletUpdated, setWalletUpdated] = useState<number | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
+  const [detailTrade, setDetailTrade] = useState<Trade | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
 
   const [pnlType, setPnlType] = useState<'profit' | 'loss'>('profit')
   const [pnlAmountInput, setPnlAmountInput] = useState<string>('')
@@ -630,13 +632,28 @@ export default function JournalPage() {
                     <TableHead>Emotion</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Tanggal</TableHead>
-                    <TableHead className="w-12">Del</TableHead>
+                    <TableHead className="w-14">Aksi</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredTrades.map(trade => (
                     <TableRow key={trade.id}>
-                      <TableCell className="font-mono font-semibold text-blue-400 text-xs">{trade.symbol}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-semibold text-blue-400 text-xs">{trade.symbol}</span>
+                          {trade.asset?.chartUrl && (
+                            <a
+                              href={trade.asset.chartUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-gray-500 hover:text-amber-400 transition-colors"
+                              title="Buka Chart Aset"
+                            >
+                              <TrendingUp className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="tabular-nums text-xs">{trade.entryPrice.toLocaleString()}</TableCell>
                       <TableCell className="tabular-nums text-xs">{trade.exitPrice?.toLocaleString() ?? '—'}</TableCell>
                       <TableCell className="tabular-nums text-xs">{fmt(trade.entryAmount)}</TableCell>
@@ -659,9 +676,14 @@ export default function JournalPage() {
                       </TableCell>
                       <TableCell className="text-xs text-gray-400">{formatDate(trade.entryDate)}</TableCell>
                       <TableCell>
-                        <button onClick={() => deleteTrade(trade.id)} className="p-1 hover:text-red-400 transition-colors">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={() => { setDetailTrade(trade); setDetailOpen(true) }} className="p-1 hover:text-blue-400 transition-colors" title="Lihat Detail">
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => deleteTrade(trade.id)} className="p-1 hover:text-red-400 transition-colors" title="Hapus">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -671,6 +693,154 @@ export default function JournalPage() {
           )}
         </CardContent>
       </Card>
+      {/* Dialog Detail Trade / Jurnal */}
+      {detailTrade && (
+        <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-[#111827] text-gray-100 border-[#1F2937]">
+            <DialogHeader>
+              <DialogTitle className="text-base font-semibold flex items-center justify-between">
+                <span>Detail Jurnal: {detailTrade.symbol}</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                  detailTrade.status === 'open' ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-500/20 text-gray-400'
+                }`}>
+                  {detailTrade.status === 'open' ? 'Open Position' : 'Closed Position'}
+                </span>
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 text-xs mt-2">
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 gap-3 bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                <div>
+                  <p className="text-gray-400 font-medium">Symbol / Aset</p>
+                  <p className="text-gray-200 mt-0.5">{detailTrade.symbol}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Strategi</p>
+                  <p className="text-gray-200 mt-0.5">{detailTrade.strategy || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Emosi Saat Entry</p>
+                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold mt-0.5 ${getEmotionColor(detailTrade.emotion)}`}>
+                    {detailTrade.emotion}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Tanggal Entry</p>
+                  <p className="text-gray-200 mt-0.5">{formatDate(detailTrade.entryDate)}</p>
+                </div>
+                {detailTrade.exitDate && (
+                  <div>
+                    <p className="text-gray-400 font-medium">Tanggal Exit</p>
+                    <p className="text-gray-200 mt-0.5">{formatDate(detailTrade.exitDate)}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Financial Info Grid */}
+              <div className="grid grid-cols-3 gap-3 bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                <div>
+                  <p className="text-gray-400 font-medium">Harga Entry</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{detailTrade.entryPrice.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Harga Exit</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{detailTrade.exitPrice ? detailTrade.exitPrice.toLocaleString() : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Leverage</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{detailTrade.leverage}x</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Modal Terpasang</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{fmt(detailTrade.entryAmount)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400 font-medium">Size Posisi</p>
+                  <p className="text-gray-200 font-mono mt-0.5">{fmt(detailTrade.positionSize)}</p>
+                </div>
+              </div>
+
+              {/* PnL Section */}
+              {detailTrade.status === 'closed' && (
+                <div className="grid grid-cols-2 gap-3 bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937]">
+                  <div>
+                    <p className="text-gray-400 font-medium">Keuntungan / Kerugian (PnL)</p>
+                    <p className={`font-mono font-semibold mt-0.5 ${detailTrade.pnl !== null ? getPnLColor(detailTrade.pnl) : 'text-gray-400'}`}>
+                      {detailTrade.pnl !== null ? `${detailTrade.pnl >= 0 ? '+' : ''}${fmt(detailTrade.pnl)}` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 font-medium">Persentase PnL</p>
+                    <p className={`font-mono font-semibold mt-0.5 ${detailTrade.pnlPercent !== null ? getPnLColor(detailTrade.pnlPercent) : 'text-gray-400'}`}>
+                      {detailTrade.pnlPercent !== null ? `${detailTrade.pnlPercent >= 0 ? '+' : ''}${detailTrade.pnlPercent.toFixed(2)}%` : '—'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Linked Asset */}
+              {detailTrade.asset && (
+                <div className="bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937] space-y-1">
+                  <p className="text-gray-400 font-medium">Aset Utama Terhubung</p>
+                  <div className="flex items-center justify-between text-gray-200 mt-1">
+                    <span>{detailTrade.asset.symbol || detailTrade.asset.productName} ({detailTrade.asset.assetType})</span>
+                    <span className="font-mono text-gray-400">Platform: {detailTrade.asset.platform || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-gray-400 mt-1">
+                    <span>Entry Aset: {detailTrade.asset.entryPrice.toLocaleString()}</span>
+                    <span>Modal Berjalan: {fmt(detailTrade.asset.currentCapital)}</span>
+                  </div>
+                  {detailTrade.asset.chartUrl && (
+                    <div className="pt-1.5 border-t border-[#1F2937] mt-1.5 flex justify-end">
+                      <a
+                        href={detailTrade.asset.chartUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 font-medium transition-colors"
+                      >
+                        <TrendingUp className="h-3 w-3" />
+                        Buka Link Chart
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Notes */}
+              <div>
+                <p className="text-gray-400 font-medium">Catatan / Rencana Trade</p>
+                <div className="bg-[#1F2937]/30 p-3 rounded-lg border border-[#1F2937] text-gray-300 mt-1 whitespace-pre-wrap">
+                  {detailTrade.notes || 'Tidak ada catatan.'}
+                </div>
+              </div>
+
+              {/* Journaling details */}
+              {detailTrade.journal && (
+                <div className="space-y-3">
+                  <p className="text-gray-400 font-medium border-t border-[#1F2937] pt-3">Evaluasi Jurnal Psikologis</p>
+                  {detailTrade.journal.mistakes && (
+                    <div>
+                      <p className="text-red-400 font-medium">Kesalahan / Human Error</p>
+                      <div className="bg-red-950/20 border border-red-900/30 p-2.5 rounded text-gray-300 mt-1">
+                        {detailTrade.journal.mistakes}
+                      </div>
+                    </div>
+                  )}
+                  {detailTrade.journal.analysis && (
+                    <div>
+                      <p className="text-blue-400 font-medium">Analisis / Pelajaran</p>
+                      <div className="bg-blue-950/20 border border-blue-900/30 p-2.5 rounded text-gray-300 mt-1">
+                        {detailTrade.journal.analysis}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
